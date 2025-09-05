@@ -1,0 +1,584 @@
+import pygame
+import sys
+import sqlite3
+import csv
+import requests
+import time
+
+pygame.init()
+
+class window():
+    def __init__(self, name):
+        self.name = name
+        self.width = 750
+        self.height = 500
+        self.display = pygame.display.set_mode((self.width, self.height)) #create attributes instead of having to call a function each time
+
+    def getDisplay(self):
+        return self.display 
+
+    def displayCaption(self, name):
+        pygame.display.set_caption(self.name)
+
+    def screen(self):
+        self.displayCaption(self.name) #display caption for homepage
+        self.display.fill((229,228,226)) 
+
+        findRouteButton.run(self.display) 
+        updatesButton.run(self.display)
+        mainTitle.run(self.display)
+        timeSince = time.time()
+        localTime = time.ctime(timeSince) #gives the live time at that moment
+        timeTitle = displayText(localTime, 375, 375)
+        timeTitle.run(self.display)
+
+
+class subWindow(window):
+    def __init__(self, name):
+        super().__init__(name)
+
+    def displayCaption(self, name):
+        pygame.display.set_caption(self.name)  
+
+    def screen(self):
+        self.displayCaption(self.name) #display caption for sub page
+        self.display.fill((229,228,226))
+
+        if current == 'Find Route':
+            generateRoute.run(self.display)
+            findingRouteTitle.run(self.display)
+            startInput.run(self.display)
+            endInput.run(self.display)
+        elif current == 'Status Updates':
+            updatesTitle.run(self.display)
+            findUpdatesButton.run(self.display)
+            lineInput.run(self.display)
+        elif current == 'Updates':
+            homeButton.run(self.display)
+        elif current == 'Generate Route':
+            routeTitle.run(self.display)
+            homeButton.run(self.display)
+
+
+class button():
+    def __init__(self, label, xcoordinate, ycoordinate, centrex, centrey, width, height): 
+        self.width = width
+        self.height = height
+        self.label = label 
+        self.centrex = centrex
+        self.centrey = centrey
+        self.xcoordinate = xcoordinate
+        self.ycoordinate = ycoordinate
+        self.size = 35
+        self.colour = (200,200,200)
+        self.labelcolour = (0,0,0)
+        self.rect = pygame.Rect(xcoordinate, ycoordinate, self.width, self.height)
+        self.font = pygame.font.SysFont(None, self.size)
+
+    def run(self, surface):
+        label = self.font.render(self.label, True, self.labelcolour) #second parameter is for sharp edges of text 
+        pygame.draw.rect(surface, self.colour, self.rect)
+        surface.blit(label, label.get_rect(center=(self.centrex, self.centrey))) 
+
+    def click(self):
+        xcoordinate, ycoordinate = pygame.mouse.get_pos()
+        return self.rect.collidepoint(xcoordinate, ycoordinate)
+
+
+class displayText(button):
+    def __init__(self, label, centrex, centrey, xcoordinate=0, ycoordinate=0, width=0, height=0):
+        super().__init__(label, centrex, centrey, xcoordinate, ycoordinate, width, height)  
+
+    #all titles are called in from window and subwindow   
+    def run(self, surface):
+        label = self.font.render(self.label, True, self.labelcolour)
+        surface.blit(label, label.get_rect(center=(self.rect.centerx, self.rect.centery)))
+
+
+class inputButton(button):
+    def __init__(self, label, xcoordinate, ycoordinate, centrex, centrey, width, height):
+        super().__init__(label, xcoordinate, ycoordinate, centrex, centrey, width, height) 
+        self.text = ''
+        self.done = True
+        self.start = ''
+
+    def run(self, surface):
+        label = self.font.render(self.label + self.text if self.text else self.label, True, self.labelcolour)
+        pygame.draw.rect(surface, self.colour, self.rect)
+        surface.blit(label, label.get_rect(center=self.rect.center))
+
+    def click(self):
+        xcoordinate, ycoordinate = pygame.mouse.get_pos()
+        return self.rect.collidepoint(xcoordinate, ycoordinate)
+
+    def update(self, event, surface):
+        try:
+            if event.type == pygame.MOUSEBUTTONDOWN and current == 'Find Route':
+                if self.click() == True:
+                    self.done = False
+                else:
+                    self.done = True
+                return self.text
+            elif event.type == pygame.MOUSEBUTTONDOWN and current == 'Status Updates':
+                if self.click() == True:
+                    self.done = False
+                else:
+                    self.done = True
+                return self.text
+            elif event.type == pygame.KEYDOWN and self.done == False:
+                if event.key == pygame.K_BACKSPACE:
+                    self.text = self.text[:-1] #takes one item off the end when clicked
+                elif event.key == pygame.K_RETURN: #locks in the station once entered
+                    self.done = True
+                else:
+                    self.text = self.text + event.unicode
+                self.run(surface)
+                return self.text
+            elif current == 'Generate Route':
+                return self.text     
+            elif current == 'Updates':
+                return self.text
+        except:
+            pass
+
+
+class database():
+    def __init__(self, database_name):
+        self.connect = sqlite3.connect(database_name)
+        self.cursor = self.connect.cursor()
+        self.createTables() #initialise tables
+
+    def createTables(self):
+        Stations ='''CREATE TABLE IF NOT EXISTS Stations(
+            StationID VARCHAR(3) PRIMARY KEY NOT NULL,
+            StationName VARCHAR(255) NOT NULL
+        )'''
+
+        Lines = '''CREATE TABLE IF NOT EXISTS Lines(
+            LineID VARCHAR(3) PRIMARY KEY NOT NULL,
+            LineName VARCHAR(255) NOT NULL
+        )'''
+
+        Platform = '''CREATE TABLE IF NOT EXISTS Platform(
+            PlatformID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+            StationID VARCHAR(3) REFERENCES Stations(StationID),
+            LineID VARCHAR(3) REFERENCES Lines(LineID),
+            LineIndex INTEGER,
+            TimeDown INTEGER,
+            UNIQUE (StationID, LineID)
+        )'''
+
+        self.cursor.execute(Stations)
+        self.cursor.execute(Lines)
+        self.cursor.execute(Platform)
+        self.connect.commit() #makes changes here
+
+    def getAllStationNames(self):
+        self.cursor.execute('SELECT StationName FROM Stations')
+        allStations = self.cursor.fetchall()
+
+        stations = []
+        for station in allStations:
+            stations.append(station[0])
+        return stations   
+
+    def getAllStations(self):
+        self.cursor.execute('SELECT StationID FROM Stations')
+        allStations = self.cursor.fetchall()
+
+        stations = []
+        for station in allStations:
+            stations.append(station[0])
+        return stations   
+
+    def getAllLines(self):
+        self.cursor.execute('SELECT LineID FROM Lines') #check all table names
+        allLines = self.cursor.fetchall()
+
+        lines = []
+        for line in allLines:
+            lines.append(line[0])
+        return lines
+
+    def getAllLineNames(self):
+        self.cursor.execute('SELECT LineName FROM Lines')
+        allLines = self.cursor.fetchall()
+
+        lines = []
+        for line in allLines:
+            lines.append(line[0])
+        return lines
+
+    def getCorrespondingLineName(self, ids):
+        self.cursor.execute('SELECT LineName FROM Lines WHERE LineID == ?', (ids,))
+        name = self.cursor.fetchone()
+        return str(name[0])
+
+    def getAllIds(self):
+        self.cursor.execute('SELECT StationID FROM Platform') 
+        allSTUFF = self.cursor.fetchall()
+
+        lines = []
+        for line in allSTUFF:
+            lines.append(line[0])
+        return lines
+
+    def getCorrespondingID(self, name):
+        self.cursor.execute('SELECT StationID FROM Stations WHERE StationName == ?', (name,))
+        ids = self.cursor.fetchone()
+        return str(ids[0])
+
+    def getCorrespondingName(self, ids):
+        self.cursor.execute('SELECT StationName FROM Stations WHERE StationID == ?', (ids,))
+        name = self.cursor.fetchone()
+        return str(name[0])
+
+    def getStationsonALine(self, line):
+        self.cursor.execute('SELECT Platform.StationID FROM Platform, Stations, Lines WHERE Platform.StationID == Stations.StationID AND Platform.LineID == Lines.LineID AND Lines.LineID == ? ORDER BY Platform.LineIndex ASC', (line,))
+        stuff = self.cursor.fetchall()
+
+        stuffs = []
+        for n in stuff:
+            stuffs.append(n[0])
+        return stuffs
+
+    def getWeights(self, name):
+        self.cursor.execute('SELECT Platform.TimeDown FROM Platform, Stations WHERE Platform.StationID == Stations.StationID AND Platform.StationID == ?', (name,))
+        x = self.cursor.fetchone()
+        return int(x[0])
+
+    def insertStation(self, id, name):
+        self.cursor.execute('INSERT OR IGNORE INTO Stations(StationID, StationName) VALUES(?, ?)', (id, name))
+        self.connect.commit()
+
+    def insertLine(self, id, name):
+        self.cursor.execute('INSERT OR IGNORE INTO Lines(LineID, LineName) VALUES(?, ?)', (id, name))
+        self.connect.commit()
+
+    def insertIndex(self, stationid, lineid, index, weight):
+        self.cursor.execute('INSERT OR IGNORE INTO Platform(StationID, LineID, LineIndex, TimeDown) VALUES(?, ?, ?, ?)', (stationid, lineid, index, weight))
+        self.connect.commit()
+
+    def closeConnection(self):
+        self.connect.close()
+        self.cursor.close()
+
+
+class api():
+    def __init__(self):
+        self.key = '8867a19db7cb4c2ca1e90e1d9321c27e'
+        self.modes = 'tube'
+
+    def getResponse(self, request):
+        response = requests.get(request)
+        responses = response.json() 
+        return responses
+
+    def getLineStatus(self, line):
+        url = 'https://api.tfl.gov.uk/Line/{}/Status?detail=true'.format(line)
+        request = '{}&app_key={}'.format(url, self.key)
+        x = self.getResponse(request)   
+
+        index = x[0]['lineStatuses'][0]
+        description = index['statusSeverityDescription'] 
+        return description
+
+    def getAllUpdates(self):
+        url = 'https://api.tfl.gov.uk/Line/Mode/{}/Disruption'.format(self.modes)
+        request = '{}&app_key={}'.format(url, self.key)
+        y = self.getResponse(request)
+
+        descriptions = [entry['description'] for entry in y if isinstance(entry, dict) and 'description' in entry]
+
+        for description in descriptions:
+            print("Description:", description) 
+
+    def getLiveArrivals(self):
+        url = 'https://api.tfl.gov.uk/Mode/{}/Arrivals[?count]'.format(self.modes, 1)
+        request = '{}&app_key={}'.format(url, self.key)
+        y = self.getResponse(request)
+
+        return y
+
+
+def getStationsFromCsv():
+    with open('stationsidk.csv', 'r') as csvfile:
+        allRows = csv.reader(csvfile) #iterates through csv
+        for row in allRows: #each row is an array with 6 items, so fourth item index is 3
+            stationName = row[3]
+            stationID = row[0]
+            Database.insertStation(stationID, stationName) #change station.csv back to stations when running this code
+
+
+def getLinesFromCsv():
+    with open('lines.csv', 'r') as csvfile:
+        allRows = csv.reader(csvfile) 
+        for row in allRows: 
+            lineName = row[1]
+            lineID = row[0]
+            Database.insertLine(lineID, lineName)
+
+
+def getIndexFromCsv():
+    lines = Database.getAllLines() #returns an array of all lines 
+    with open('stationsidk.csv', 'r') as csvfile:
+        allRows = csv.reader(csvfile)
+        for row in allRows: #each row of the csv
+            stationID = row[0]
+            weight = row[31]
+            for x in range(26):
+                if int(row[x+5]) != 0: 
+                    lineID = lines[x]
+                    index = int(row[x+5])
+                    Database.insertIndex(stationID, lineID, index, weight)
+
+
+def edges():
+    all_lines = Database.getAllLines()
+    for line in all_lines:
+        allstations = Database.getStationsonALine(line)
+        for n in range(len(allstations) - 1):
+            current = allstations[n]
+            weight = Database.getWeights(current)
+            next = allstations[n + 1]
+            init_graph[current][next] = weight
+            init_graph[next][current] = weight
+
+
+def updatedEdges():
+    alllines = Database.getAllLines()
+    for line in alllines:
+        allstations = Database.getStationsonALine(line)
+        name = Database.getCorrespondingLineName(line)
+        if name == 'Hammersmith & City' or name == 'East London':
+            name = 'hammersmith-city'
+        status = Connection.getLineStatus(line) #change this part
+        max = sys.maxsize
+        if status != 'Good Service':
+            for n in range(len(allstations) - 1):
+                current = allstations[n]
+                next = allstations[n + 1]
+                init_graph[current][next] = max
+                init_graph[next][current] = max
+        else:        
+            for n in range(len(allstations) - 1):
+                current = allstations[n]
+                weight = Database.getWeights(current)
+                next = allstations[n + 1]
+                init_graph[current][next] = weight
+                init_graph[next][current] = weight
+
+
+class graph():
+    def __init__(self, vertices, init_graph):
+        self.vertices = vertices
+        self.graph = self.generategraph(vertices, init_graph)
+
+    def getweightings(self, one, two):
+        return self.graph[one][two]
+
+    def getvertices(self):
+        return self.vertices
+
+    def generategraph(self, vertices, init_graph):
+        graph = {}
+        for vertex in vertices:
+            graph[vertex] = {}
+
+        graph.update(init_graph)
+
+        for vertex, edges in graph.items():
+            for next, weight in edges.items():
+                if vertex not in graph[next]:  
+                    graph[next][vertex] = weight
+
+                if next not in graph[vertex]:
+                    graph[vertex][next] = weight
+        return graph
+
+
+    def getneighbours(self, vertex):
+        neighbours = []
+        for x in self.vertices:
+            if x in self.graph[vertex]:
+                neighbours.append(x)
+        return neighbours
+
+
+def dijkstrasalgorithm(graph, start, unvisited):
+
+    journeystations = {} #actual journey
+    shortestroute = {} #weights in a dictionary
+
+    max = sys.maxsize
+    for vertex in unvisited:
+        shortestroute[vertex] = max  
+
+    shortestroute[start] = 0
+
+    while unvisited:
+        current = None
+        for vertex in unvisited: #loop finds the smallest vertex value
+            if current == None:
+                current = vertex
+            elif shortestroute[vertex] < shortestroute[current]:
+                current = vertex
+
+        neighbours = graph.getneighbours(current)
+        for neighbour in neighbours:
+            new = shortestroute[current] + graph.getweightings(current, neighbour)
+            if new < shortestroute[neighbour]:
+                shortestroute[neighbour] = new
+                journeystations[neighbour] = current
+
+        unvisited.remove(current)
+
+    return journeystations, shortestroute 
+
+
+def getJourney(journeystations, start, startID, end, endID, surface, n=170):
+    if endID == startID:
+        journeystart = '-> {}'.format(start)
+        journeystartTitle = displayText(journeystart, 375, n)
+        journeystartTitle.run(surface)
+        return n+50  
+
+    end = Database.getCorrespondingName(endID)
+    n = getJourney(journeystations, start, startID, end, journeystations[endID], surface, n)
+
+    journeyend = '-> {}'.format(end)
+    journeyendTitle = displayText(journeyend, 375, n)
+    journeyendTitle.run(surface)
+    return n+50
+
+
+#creating window objects
+mainPage = window('Main Page')
+findRoute = subWindow('Find a Route')
+route = subWindow('Route')
+updates = subWindow('Status Updates')
+updates2 = subWindow('Status Updates')
+
+#creating button objects
+findRouteButton = button('Find a Route', 275, 200, 375, 225, 200, 50)
+updatesButton = button('Status Updates',275, 275, 375, 300, 200, 50)
+generateRoute = button('Generate Route', 275, 350, 375, 375, 200, 50)
+homeButton = button('Main Page', 275, 425, 375, 450, 200, 50)
+findUpdatesButton = button('Find Updates', 275, 350, 375, 375, 200, 50)
+
+#creating title objects
+mainTitle = displayText('Main Page', 375, 125) 
+findingRouteTitle = displayText('Find a Route', 375, 125)
+routeTitle = displayText('Your Journey', 375, 75)
+updatesTitle = displayText('Status Updates', 375, 125)
+endText = displayText('End', 375, 405)
+startText = displayText('Start', 375, 150)
+stationError = displayText('Error: Station is invalid, try again!', 375, 150)
+lineError = displayText('Error: Line is invalid, try again!', 375, 150)
+
+#creating user inputs for start/stop 
+startInput = inputButton('Enter Start Station:', 125, 200, 250, 225, 500, 50)
+endInput = inputButton('Enter End Station:', 125, 275, 250, 300, 500, 50)
+lineInput = inputButton('Enter Line: ', 125, 200, 250, 225, 500, 50)
+
+
+if __name__ == '__main__':
+    current = 'Main Page'
+    mainPage.screen()    
+    valid = True
+    while valid:
+        try:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    sys.exit()
+
+                routeDisplay = findRoute.getDisplay()
+                updatesDisplay = updates.getDisplay()
+
+                if current == 'Find Route':
+                    start = startInput.update(event, routeDisplay) 
+                    end = endInput.update(event, routeDisplay)
+                elif current == 'Status Updates':
+                    line = lineInput.update(event, updatesDisplay)
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    if findRouteButton.click() == True and current == 'Main Page':
+                        current = 'Find Route'
+                        findRoute.screen()         
+                    elif generateRoute.click() == True and current == 'Find Route':
+                        current = 'Generate Route'
+
+                        start = startInput.update(event, routeDisplay) 
+                        end = endInput.update(event, routeDisplay)
+
+                        Database = database('testin221g.db')
+
+                        allStations = Database.getAllStationNames()
+                        startFound = False
+                        endFound = False
+
+                        for station in allStations:
+                            if station == start:
+                                startFound = True
+                            elif station == end:
+                                endFound = True
+
+                        if startFound and endFound:
+                            getStationsFromCsv()
+                            getLinesFromCsv()
+                            getIndexFromCsv()
+
+                            startID= Database.getCorrespondingID(start)
+                            endID = Database.getCorrespondingID(end)
+
+                            vertices = Database.getAllStations()
+
+                            init_graph = {}
+                            for vertex in vertices:
+                                init_graph[vertex] = {}
+
+                            edges()
+                            Graph = graph(vertices, init_graph)
+                            unvisited = Graph.getvertices() 
+                            journeystations, shortestroute = dijkstrasalgorithm(Graph, startID, unvisited)
+
+
+                            route.screen()
+
+                            value = "Your route will take {} minutes to get to {}:".format(shortestroute.get(endID), end) #formatted so that its stored as a string
+                            valueText = displayText(value, 375, 115)
+                            valueText.run(route.getDisplay())
+
+                            getJourney(journeystations, start, startID, end, endID, route.getDisplay())
+                            startText.run(route.getDisplay())
+                            endText.run(route.getDisplay())
+                        else:
+                            route.screen()
+                            stationError.run(route.getDisplay())
+
+                    elif updatesButton.click() == True and current == 'Main Page':
+                        current = 'Status Updates'
+                        updates.screen()                    
+                    elif homeButton.click() == True and current == 'Generate Route':
+                        current = 'Main Page'
+                        mainPage.screen()
+                    elif homeButton.click() == True and current == 'Updates':
+                        current = 'Main Page'
+                        mainPage.screen()
+                    elif findUpdatesButton.click() == True and current == 'Status Updates':
+                        current = 'Updates'
+                        line = lineInput.update(event, updatesDisplay)
+
+                        Connection = api()
+                        description = Connection.getLineStatus(line)
+                        updates2.screen()
+
+                        descriptions = '{} line status: {}'.format(line, description) 
+                        statusText = displayText(descriptions, 375, 115)
+                        statusText.run(updates2.getDisplay())
+
+            pygame.display.flip()
+        except:
+            if current == 'Updates':
+                updates2.screen()
+                lineError.run(updates2.getDisplay())
